@@ -1,1 +1,1 @@
-void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*));
+void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*, int));

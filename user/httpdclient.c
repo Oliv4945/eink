@@ -9,10 +9,9 @@
 #define STATE_BODY 1
 
 static char hdr[1024];
-static char out[1024];
 static int state;
 static int outpos;
-void (*callback)(char *out);
+void (*callback)(char *data, int len);
 
 static void ICACHE_FLASH_ATTR httpclientParseChar(struct espconn *conn, char c) {
 	static char last[4];
@@ -22,19 +21,22 @@ static void ICACHE_FLASH_ATTR httpclientParseChar(struct espconn *conn, char c) 
 		last[2]=last[3];
 		last[3]=c;
 		if (last[0]=='\r' && last[1]=='\n' && last[2]=='\r' && last[3]=='\n') state=STATE_BODY;
-	} else {
-		last[3]=0;
-		if (outpos<(sizeof(out)-1)) {
-			out[outpos++]=c;
-			out[outpos]=0;
-		}
 	}
 }
 
 static void ICACHE_FLASH_ATTR ircRecvCb(void *arg, char *data, unsigned short len) {
 	struct espconn *conn=(struct espconn *)arg;
 	int x;
-	for (x=0; x<len; x++) httpclientParseChar(conn, data[x]);
+	if (state==STATE_HDR) {
+		for (x=0; x<len; x++) {
+			httpclientParseChar(conn, data[x]);
+			if (state==STATE_BODY) break;
+		}
+		//Do the callback on the remaining data.
+		if (x!=len) callback(data+x, len-x);
+	} else {
+		callback(data, len);
+	}
 }
 
 static void ICACHE_FLASH_ATTR httpclientConnectedCb(void *arg) {
@@ -47,9 +49,10 @@ static void ICACHE_FLASH_ATTR httpclientConnectedCb(void *arg) {
 
 
 static void ICACHE_FLASH_ATTR httpclientDisconCb(void *arg) {
-	callback(out);
-	os_printf("Discon. Got %s\n", out);
+	callback(NULL, 0);
+//	os_printf("Discon. Got %s\n", out);
 }
+
 
 static void ICACHE_FLASH_ATTR httpServerFoundCb(const char *name, ip_addr_t *ip, void *arg) {
 	static esp_tcp tcp;
@@ -73,11 +76,11 @@ static void ICACHE_FLASH_ATTR httpServerFoundCb(const char *name, ip_addr_t *ip,
 	espconn_connect(conn);
 }
 
-void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*)) {
+void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*, int)) {
 	static struct espconn conn;
 	static ip_addr_t ip;
 	callback=cb;
-	os_sprintf(hdr, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", hcloc, hcserver);
+	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", hcloc, hcserver);
 	os_printf("httpclient: %s", hdr);
 	espconn_gethostbyname(&conn, hcserver, &ip, httpServerFoundCb);
 }

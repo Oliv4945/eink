@@ -21,12 +21,16 @@ static ETSTimer tstTimer;
 #define INK_VSTOP 3
 static int einkState=0;
 static int einkYpos;
-
 static int einkPat=0;
+
+#define BMFIFOLEN (1024*32)
+static char bmBuff[BMFIFOLEN];
+static char *bmRpos, *bmWpos;
 
 static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 	int x;
 	if (einkState==INK_STARTUP) {
+		einkPat=0;
 		ioEinkEna(1);
 		os_timer_arm(&tstTimer, 100, 0);
 		einkState=INK_VSTART;
@@ -35,50 +39,66 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		einkYpos=0;
 		einkState=INK_HSEND;
 		os_timer_arm(&tstTimer, 20, 0);
-
-
 	} else if (einkState==INK_HSEND) {
-		os_timer_arm(&tstTimer, 0, 0);
-		ioEinkHscanStart();
-
-		for (x=0; x<800; x+=4) {
-			if (einkPat==0) ioEinkWrite(0x55);
-			if (einkPat==1) ioEinkWrite(0xaa);
-			if (einkPat==2) ioEinkWrite(((x^(einkYpos*4))&0x40)?0xff:0x55);
-			if (einkPat==3) ioEinkWrite(((x^(einkYpos*4))&0x80)?0xff:0x55);
-		}
-		ioEinkHscanStop();
-		ioEinkVscanWrite((einkPat==3)?0:15);
-		einkYpos++;
-		if (einkYpos==650) {
-			einkState=INK_VSTOP;
+		//Calculate length of data in fifo
+		x=bmWpos-bmRpos;
+		if (x<0) x+=BMFIFOLEN;
+		if (x<800 && einkPat>=2) {
+			os_timer_arm(&tstTimer, 2, 0);
+		} else {
+			os_timer_arm(&tstTimer, 0, 0);
+			ioEinkHscanStart();
+	
+			if (einkPat==0) for (x=0; x<800; x+=4) ioEinkWrite(0x55);
+			if (einkPat==1) for (x=0; x<800; x+=4) ioEinkWrite(0xaa);
+			if (einkPat==2) {
+				for (x=0; x<800; x+=4) {
+					ioEinkWrite(*bmRpos++);
+					if (bmRpos>&bmBuff[BMFIFOLEN-1]) bmRpos=bmBuff;
+				}
+			}
+			ioEinkHscanStop();
+			ioEinkVscanWrite((einkPat==3)?0:15);
+			einkYpos++;
+			if (einkYpos==600) {
+				einkState=INK_VSTOP;
+			}
 		}
 	} else if (einkState==INK_VSTOP) {
 		ioEinkVscanStop();
-		ioEinkEna(0);
-		einkPat++;
-		einkPat&=3;
-		einkState=INK_STARTUP;
-		os_timer_arm(&tstTimer, 1000, 0);
+		if (einkPat==2) {
+			ioEinkEna(0);
+			einkState=INK_STARTUP;
+		} else {
+			einkPat++;
+			einkState=INK_VSTART;
+			os_timer_arm(&tstTimer, 100, 0);
+		}
 	}
-
 }
 
 
-//void cb(char*resp) {
-//	os_printf("Resp: %s\nSleep...\n", resp);
-//	system_deep_sleep(10000000);
-//}
+
+void cb(char* data, int len) {
+	int x;
+	os_printf("Data: %d bytes\n", len);
+	for (x=0; x<len; x++) {
+		*bmWpos++=data[x];
+		if (bmWpos>&bmBuff[BMFIFOLEN-1]) bmWpos=bmBuff;
+	}
+}
 
 void user_init(void)
 {
 //	system_timer_reinit();
 	stdoutInit();
 	ioInit();
-//	httpclientFetch("meuk.spritesserver.nl", "/esptest.php", 1024, cb);
+	
+	bmRpos=bmBuff;
+	bmWpos=bmBuff;
+	httpclientFetch("meuk.spritesserver.nl", "/espbm.php", 1024, cb);
 
 	os_timer_disarm(&tstTimer);
 	os_timer_setfn(&tstTimer, tstTimerCb, NULL);
-	os_timer_arm(&tstTimer, 2000, 0);
-
+	os_timer_arm(&tstTimer, 3000, 0);
 }
