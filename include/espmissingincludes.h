@@ -40,4 +40,5 @@ uint32 system_get_time();
 int os_random();
 int rand(void);
 void ets_bzero(void *s, size_t n);
+void ets_delay_us(int ms);
 #endif

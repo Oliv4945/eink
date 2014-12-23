@@ -5,35 +5,148 @@
 #include "mem.h"
 #include "osapi.h"
 #include "gpio.h"
+#include "spi_register.h"
 
-//Pinout:
+
+//GPIO pinout:
 // GPIO14/MTMS/HSPICLK - clk
 // GPIO13/MTCK/HSPID - data
-// gpio5 - boostdis
-// gpio2 - cl
-// gpio12 - strobe ctl shift reg
+#define BOOSTDIS 4
+#define E_CL 2
+#define STROBE 12
 
-//Pinout ctl shift reg
-// sh0 - OE
-// sh1 - Vneg_ena
-// sh2 - SPH
-// sh3 - CKV
-// sh4 - Vpos_ena
-// sh5 - LE
-// sh6 - SPV
-// sh7 - gmode
+// WARNING: The labels of the GPIO4 and GPIO5 pins seem switched on the ESP-12 module.
 
+//Control shift register pinout:
+#define E_OE		(1<<0)
+#define VNEG_ENA	(1<<1)
+#define E_SPH		(1<<2)
+#define E_CKV		(1<<3)
+#define VPOS_ENA	(1<<4)
+#define E_LE		(1<<5)
+#define E_SPV		(1<<6)
+#define E_GMODE		(1<<7)
 
-void ICACHE_FLASH_ATTR ioLed(int ena) {
+static uint8_t sregVal;
+
+//we keep this function in SRAM for speed reasons
+void ioSpiSend(uint16_t data) {
+	while(READ_PERI_REG(SPI_CMD(1)) & SPI_USR);
+	CLEAR_PERI_REG_MASK(SPI_USER(1), SPI_USR_MOSI | SPI_USR_MISO);
+	//SPI_FLASH_USER2 bit28-31 is cmd length,cmd bit length is value(0-15)+1,
+	// bit15-0 is cmd value.
+	WRITE_PERI_REG(SPI_USER2(1), ((7 & SPI_USR_COMMAND_BITLEN) << SPI_USR_COMMAND_BITLEN_S) | data);
+	SET_PERI_REG_MASK(SPI_CMD(1), SPI_USR);
+}
+
+void ioShiftCtl() {
+	ioSpiSend(sregVal);
+	while(READ_PERI_REG(SPI_CMD(1)) & SPI_USR);
+	gpio_output_set((1<<STROBE), 0, (1<<STROBE), 0);
+	os_delay_us(1);
+	gpio_output_set(0, (1<<STROBE), (1<<STROBE), 0);
+}
+
+void ioEinkHclk() {
+	gpio_output_set((1<<E_CL), 0, (1<<E_CL), 0);
+	gpio_output_set(0, (1<<E_CL), (1<<E_CL), 0);
+}
+
+void ioEinkVclk() {
+	sregVal&=~(E_CKV); ioShiftCtl();
+	os_delay_us(1);
+	sregVal|=(E_CKV); ioShiftCtl();
+}
+
+void ioEinkVscanStart() {
+	sregVal|=(E_GMODE|E_OE|E_CKV); 
+	sregVal&=~(E_LE);
+	ioShiftCtl();
+	os_delay_us(1000);
+	sregVal|=(E_SPV); ioShiftCtl();
+	os_delay_us(500);
+	sregVal&=~(E_SPV); ioShiftCtl();
+	os_delay_us(1);
+	sregVal&=~(E_CKV); ioShiftCtl();
+	os_delay_us(25);
+	sregVal|=(E_CKV); ioShiftCtl();
+	os_delay_us(1);
+	sregVal|=(E_SPV); ioShiftCtl();
+
+	os_delay_us(25);
+	ioEinkVclk();
+	os_delay_us(25);
+	ioEinkVclk();
+	os_delay_us(25);
+	ioEinkVclk();
+}
+
+void ioEinkVscanStop() {
+	ioEinkVclk();
+	ioEinkVclk();
+	ioEinkVclk();
+	ioEinkVclk();
+	ioEinkVclk();
+	ioEinkVclk();
+	ioEinkVclk();
+	ioEinkVclk();
+	sregVal&=~(E_CKV); ioShiftCtl();
+	os_delay_us(3000);
+	sregVal|=(E_CKV); ioShiftCtl();
+	os_delay_us(430);
+}
+
+void ioEinkHscanStart() {
+	ioEinkHclk();
+	ioEinkHclk();
+	sregVal&=~(E_SPH); ioShiftCtl();
+}
+
+void ioEinkHscanStop() {
+	sregVal|=(E_SPH); ioShiftCtl();
+}
+
+void ioEinkWrite(uint8_t data) {
+	ioSpiSend(data);
+	while(READ_PERI_REG(SPI_CMD(1)) & SPI_USR);
+	gpio_output_set((1<<E_CL), 0, (1<<E_CL), 0);
+	gpio_output_set(0, (1<<E_CL), (1<<E_CL), 0);
+}
+
+void ioEinkVscanWrite(int len) {
+	gpio_output_set((1<<E_CL), 0, (1<<E_CL), 0);
+	sregVal&=~(E_CKV); ioShiftCtl();
+	gpio_output_set(0, (1<<E_CL), (1<<E_CL), 0);
+	os_delay_us(len);
+	sregVal|=(E_CKV); ioShiftCtl();
+	sregVal|=(E_LE); ioShiftCtl();
+	sregVal&=~(E_LE); ioShiftCtl();
+	os_delay_us(1);
+}
+
+void ICACHE_FLASH_ATTR ioEinkEna(int ena) {
 	if (ena) {
-		gpio_output_set(BIT2, 0, BIT2, 0);
+		gpio_output_set(0, (1<<BOOSTDIS), (1<<BOOSTDIS), 0);
+		os_delay_us(1000);
+		sregVal=VNEG_ENA; ioShiftCtl();
+		os_delay_us(1000);
+		sregVal=VNEG_ENA|VPOS_ENA; ioShiftCtl();
 	} else {
-		gpio_output_set(0, BIT2, BIT2, 0);
+		sregVal=VNEG_ENA; ioShiftCtl();
+		os_delay_us(1000);
+		sregVal=0; ioShiftCtl();
+		os_delay_us(1000);
+		gpio_output_set((1<<BOOSTDIS), 0, (1<<BOOSTDIS), 0);
 	}
 }
 
-void ioInit() {
+void ICACHE_FLASH_ATTR ioInit() {
+	gpio_init();
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO5_U, FUNC_GPIO5);
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
+	gpio_output_set((1<<BOOSTDIS), (1<<E_CL)|(1<<STROBE), (1<<BOOSTDIS)|(1<<E_CL)|(1<<STROBE), 0);
+
 	//Enable SPI
 	WRITE_PERI_REG(PERIPHS_IO_MUX, 0x105);
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, 2);
@@ -54,18 +167,10 @@ void ioInit() {
 
 	//set 8bit output buffer length, the buffer is the low 8bit of register"SPI_FLASH_C0"
 	WRITE_PERI_REG(SPI_USER1(1),
-		((15 & SPI_USR_MOSI_BITLEN) << SPI_USR_MOSI_BITLEN_S)|
-		((15 & SPI_USR_MISO_BITLEN) << SPI_USR_MISO_BITLEN_S));
+		((8 & SPI_USR_MOSI_BITLEN) << SPI_USR_MOSI_BITLEN_S)|
+		((8 & SPI_USR_MISO_BITLEN) << SPI_USR_MISO_BITLEN_S));
+	ioShiftCtl(0);
 }
 
 
-//we keep this function in SRAM for speed reasons
-void hspi_spi_send(uint16 data) {
-	CLEAR_PERI_REG_MASK(SPI_USER(1), SPI_USR_MOSI | SPI_USR_MISO);
-	//SPI_FLASH_USER2 bit28-31 is cmd length,cmd bit length is value(0-15)+1,
-	// bit15-0 is cmd value.
-	WRITE_PERI_REG(SPI_USER2(1), ((15 & SPI_USR_COMMAND_BITLEN) << SPI_USR_COMMAND_BITLEN_S) | data);
-	SET_PERI_REG_MASK(SPI_CMD(1), SPI_USR);
-	while(READ_PERI_REG(SPI_CMD(1)) & SPI_USR);
-}
 
