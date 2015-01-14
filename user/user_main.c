@@ -24,7 +24,7 @@ static int einkState=0;
 static int einkYpos;
 static int einkPat=0;
 
-#define BMFIFOLEN (1024*16)
+#define BMFIFOLEN (1024*24)
 static char bmBuff[BMFIFOLEN];
 static char *bmRpos, *bmWpos;
 static char tcpConnOpen;
@@ -115,8 +115,9 @@ static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 }
 
 void sleepmode() {
-	system_deep_sleep(60*1000*1000);
-//	os_printf("WtF, after system_deep_sleep()?\n");
+	system_deep_sleep(20*60*1000*1000);
+//	system_deep_sleep(10*1000*1000);
+	os_printf("WtF, after system_deep_sleep()?\n");
 //	while(1);
 }
 

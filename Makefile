@@ -29,7 +29,7 @@ ESPDELAY	?= 3
 ESPBAUD		?= 115200
 
 # name for the target project
-TARGET		= sensortest
+TARGET		= einkdisp
 
 # which modules (subdirectories) of the project to include in compiling
 #MODULES		= driver user lwip/api lwip/app lwip/core lwip/core/ipv4 lwip/netif
