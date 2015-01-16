@@ -11,21 +11,21 @@
 //GPIO pinout:
 // GPIO14/MTMS/HSPICLK - clk
 // GPIO13/MTCK/HSPID - data
-#define BOOSTDIS 4
-#define E_CL 2
+#define BOOSTDIS 2
+#define E_CL 5
 #define STROBE 12
+#define E_OE 4
 
 // WARNING: The labels of the GPIO4 and GPIO5 pins seem switched on the ESP-12 module.
 
 //Control shift register pinout:
-#define E_OE		(1<<0)
-#define VNEG_ENA	(1<<1)
-#define E_SPH		(1<<2)
-#define E_CKV		(1<<3)
-#define VPOS_ENA	(1<<4)
-#define E_LE		(1<<5)
-#define E_SPV		(1<<6)
-#define E_GMODE		(1<<7)
+#define VNEG_ENA	(1<<0)
+#define VPOS_ENA	(1<<1)
+#define E_SPV		(1<<2)
+#define E_LE		(1<<4)
+#define E_SPH		(1<<5)
+#define E_GMODE		(1<<6)
+#define E_CKV		(1<<7)
 
 static uint8_t sregVal;
 
@@ -59,7 +59,7 @@ void ioEinkVclk() {
 }
 
 void ioEinkVscanStart() {
-	sregVal|=(E_GMODE|E_OE|E_CKV); 
+	sregVal|=(E_GMODE|E_CKV); 
 	sregVal&=~(E_LE);
 	ioShiftCtl();
 	os_delay_us(1000);
@@ -117,7 +117,9 @@ void ioEinkVscanWrite(int len) {
 	gpio_output_set((1<<E_CL), 0, (1<<E_CL), 0);
 	sregVal&=~(E_CKV); ioShiftCtl();
 	gpio_output_set(0, (1<<E_CL), (1<<E_CL), 0);
+	gpio_output_set(0, (1<<E_OE), (1<<E_OE), 0);
 	os_delay_us(len);
+	gpio_output_set((1<<E_OE), 0, (1<<E_OE), 0);
 	sregVal|=(E_CKV); ioShiftCtl();
 	sregVal|=(E_LE); ioShiftCtl();
 	sregVal&=~(E_LE); ioShiftCtl();
@@ -144,8 +146,9 @@ void ICACHE_FLASH_ATTR ioInit() {
 	gpio_init();
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO5_U, FUNC_GPIO5);
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4);
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
-	gpio_output_set((1<<BOOSTDIS), (1<<E_CL)|(1<<STROBE), (1<<BOOSTDIS)|(1<<E_CL)|(1<<STROBE), 0);
+	gpio_output_set((1<<BOOSTDIS)|(1<<E_OE), (1<<E_CL)|(1<<STROBE), (1<<E_OE)|(1<<BOOSTDIS)|(1<<E_CL)|(1<<STROBE), 0);
 
 	//Enable SPI
 	WRITE_PERI_REG(PERIPHS_IO_MUX, 0x105);

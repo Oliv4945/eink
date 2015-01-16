@@ -14,6 +14,7 @@ void user_init(void);
 
 static ETSTimer tstTimer;
 static ETSTimer wdtTimer;
+static ETSTimer klontTimer;
 
 
 #define INK_STARTUP 0
@@ -48,15 +49,19 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		//Calculate length of data in fifo
 		x=bmWpos-bmRpos;
 		if (x<0) x+=BMFIFOLEN;
-		if (x<800 && einkPat>=2 && tcpConnOpen) {
+		if (x<800 && einkPat>=4 && tcpConnOpen) {
 			os_timer_arm(&tstTimer, 100, 0);
 		} else {
 			os_timer_arm(&tstTimer, 0, 0);
 			ioEinkHscanStart();
 	
-			if (einkPat==0) for (x=0; x<800; x+=4) ioEinkWrite(0x55);
-			if (einkPat==1) for (x=0; x<800; x+=4) ioEinkWrite(0xaa);
-			if (einkPat==2) {
+			if (einkPat==0 || einkPat==1) {
+				for (x=0; x<800; x+=4) ioEinkWrite(0x55);
+			}
+			if (einkPat==2 || einkPat==3) {
+				for (x=0; x<800; x+=4) ioEinkWrite(0xaa);
+			}
+			if (einkPat>=4) {
 				for (x=0; x<800; x+=4) {
 					ioEinkWrite(*bmRpos++);
 					if (bmRpos>&bmBuff[BMFIFOLEN-1]) {
@@ -66,7 +71,7 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 				}
 			}
 			ioEinkHscanStop();
-			ioEinkVscanWrite((einkPat==3)?0:15);
+			ioEinkVscanWrite((einkPat==4)?0:15);
 			einkYpos++;
 			if (einkYpos==600) {
 				einkState=INK_VSTOP;
@@ -74,10 +79,10 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		}
 	} else if (einkState==INK_VSTOP) {
 		ioEinkVscanStop();
-		if (einkPat==2) {
-			ioEinkEna(0);
+		if (einkPat==4) {
 			einkState=INK_STARTUP;
 			os_printf("Done displaying image. Sleeping.\n");
+			ioEinkEna(0);
 			sleepmode();
 		} else {
 			einkPat++;
@@ -114,9 +119,23 @@ static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	sleepmode();
 }
 
+static struct station_config stconf;
+
+static void ICACHE_FLASH_ATTR klontTimerCb(void *arg) {
+	os_printf("klonttimer\n");
+	if (wifi_get_opmode()!=1) {
+		wifi_set_opmode(1);
+		system_restart();
+	}
+	os_strncpy((char*)stconf.ssid, "Sprite", 32);
+	os_strncpy((char*)stconf.password, "", 64);
+	wifi_station_set_config(&stconf);
+	wifi_station_connect();
+}
+
 void sleepmode() {
-	system_deep_sleep(20*60*1000*1000);
-//	system_deep_sleep(10*1000*1000);
+//	system_deep_sleep(20*60*1000*1000);
+	system_deep_sleep(60*1000*1000);
 	os_printf("WtF, after system_deep_sleep()?\n");
 //	while(1);
 }
@@ -127,7 +146,8 @@ void user_init(void)
 //	system_timer_reinit();
 	stdoutInit();
 	ioInit();
-	
+
+
 	bmRpos=bmBuff;
 	bmWpos=bmBuff;
 	tcpConnOpen=1;
@@ -136,6 +156,10 @@ void user_init(void)
 	os_timer_disarm(&tstTimer);
 	os_timer_setfn(&tstTimer, tstTimerCb, NULL);
 	os_timer_arm(&tstTimer, 3000, 0);
+
+	os_timer_disarm(&klontTimer);
+	os_timer_setfn(&klontTimer, klontTimerCb, NULL);
+//	os_timer_arm(&klontTimer, 2000, 1);
 
 	os_timer_disarm(&wdtTimer);
 	os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);
