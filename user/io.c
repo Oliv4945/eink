@@ -52,6 +52,15 @@ void ioEinkHclk() {
 	gpio_output_set(0, (1<<E_CL), (1<<E_CL), 0);
 }
 
+
+void ioEinkClk(int i) {
+	while(i--) {
+		gpio_output_set((1<<E_CL), 0, (1<<E_CL), 0);
+		gpio_output_set(0, (1<<E_CL), (1<<E_CL), 0);
+	}
+}
+
+
 void ioEinkVclk() {
 	sregVal&=~(E_CKV); ioShiftCtl();
 	os_delay_us(1);

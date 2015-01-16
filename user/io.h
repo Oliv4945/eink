@@ -9,4 +9,4 @@ void ioEinkWrite(uint8_t data);
 void ioEinkVscanWrite(int len);
 void ioEinkVscanStart();
 void ioEinkVscanStop();
-
+void ioEinkClk(int i);

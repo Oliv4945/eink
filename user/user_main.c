@@ -21,11 +21,12 @@ static ETSTimer klontTimer;
 #define INK_VSTART 1
 #define INK_HSEND 2
 #define INK_VSTOP 3
+#define INK_WAITDATA 4
 static int einkState=0;
 static int einkYpos;
 static int einkPat=0;
 
-#define BMFIFOLEN (1024*24)
+#define BMFIFOLEN (1024*32)
 static char bmBuff[BMFIFOLEN];
 static char *bmRpos, *bmWpos;
 static char tcpConnOpen;
@@ -35,48 +36,77 @@ void sleepmode();
 
 static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 	int x;
+	int rep=0;
 	if (einkState==INK_STARTUP) {
 		einkPat=0;
 		ioEinkEna(1);
 		os_timer_arm(&tstTimer, 100, 0);
 		einkState=INK_VSTART;
+	} else if (einkState==INK_WAITDATA) {
+		if (bmWpos!=bmRpos) {
+			//Wake up e-ink display!
+			ioEinkEna(1);
+			os_timer_arm(&tstTimer, 100, 0);
+			einkState=INK_VSTART;
+		} else {
+			//Keep sleeping
+			os_timer_arm(&tstTimer, 100, 0);
+		}
 	} else if (einkState==INK_VSTART) {
 		ioEinkVscanStart();
 		einkYpos=0;
 		einkState=INK_HSEND;
 		os_timer_arm(&tstTimer, 20, 0);
 	} else if (einkState==INK_HSEND) {
-		//Calculate length of data in fifo
-		x=bmWpos-bmRpos;
-		if (x<0) x+=BMFIFOLEN;
-		if (x<800 && einkPat>=4 && tcpConnOpen) {
-			os_timer_arm(&tstTimer, 100, 0);
-		} else {
+		if (einkPat<4) {
 			os_timer_arm(&tstTimer, 0, 0);
 			ioEinkHscanStart();
 	
 			if (einkPat==0 || einkPat==1) {
-				for (x=0; x<800; x+=4) ioEinkWrite(0x55);
+				ioEinkWrite(0x55);
+				ioEinkClk(800/4);
 			}
 			if (einkPat==2 || einkPat==3) {
-				for (x=0; x<800; x+=4) ioEinkWrite(0xaa);
-			}
-			if (einkPat>=4) {
-				for (x=0; x<800; x+=4) {
-					ioEinkWrite(*bmRpos++);
-					if (bmRpos>&bmBuff[BMFIFOLEN-1]) {
-//						os_printf("fifo: r wraparound\n");
-						bmRpos=bmBuff;
-					}
-				}
+				ioEinkWrite(0xaa);
+				ioEinkClk(800/4);
 			}
 			ioEinkHscanStop();
-			ioEinkVscanWrite((einkPat==4)?0:15);
+			ioEinkVscanWrite(15);
 			einkYpos++;
 			if (einkYpos==600) {
 				einkState=INK_VSTOP;
 			}
+		} else {
+			//Calculate length of data in fifo
+			x=bmWpos-bmRpos;
+			if (x<0) x+=BMFIFOLEN;
+			if (x<800/4 && tcpConnOpen) {
+				//We need to draw incoming bytes but none available. Sleep.
+				os_timer_arm(&tstTimer, 20, 0);
+			} else {
+				//We can draw stuf. Reschedule ASAP please.
+				os_timer_arm(&tstTimer, 0, 0);
+				ioEinkHscanStart();
+
+				for (x=0; x<800; x+=4) {
+					ioEinkWrite(*bmRpos++);
+					if (bmRpos>&bmBuff[BMFIFOLEN-1]) bmRpos=bmBuff;
+					if (((*bmRpos)&0xc0)==0xc0) {
+						rep=(*bmRpos++)&0x3f;
+						x+=rep*4;
+						ioEinkClk(rep);
+						if (bmRpos>&bmBuff[BMFIFOLEN-1]) bmRpos=bmBuff;
+					}
+				}
+				ioEinkHscanStop();
+				ioEinkVscanWrite(115);
+				einkYpos++;
+				if (einkYpos==600) {
+					einkState=INK_VSTOP;
+				}
+			}
 		}
+
 	} else if (einkState==INK_VSTOP) {
 		ioEinkVscanStop();
 		if (einkPat==4) {
@@ -84,10 +114,16 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 			os_printf("Done displaying image. Sleeping.\n");
 			ioEinkEna(0);
 			sleepmode();
+		} else if (einkPat==3 && bmWpos==bmRpos) {
+			einkPat++;
+			//No data to draw yet. Go to sleep mode.
+			ioEinkEna(0);
+			einkState=INK_WAITDATA;
+			os_timer_arm(&tstTimer, 100, 0);
 		} else {
 			einkPat++;
 			einkState=INK_VSTART;
-			os_timer_arm(&tstTimer, 100, 0);
+			os_timer_arm(&tstTimer, 10, 0);
 		}
 	}
 }
@@ -152,10 +188,11 @@ void user_init(void)
 	bmWpos=bmBuff;
 	tcpConnOpen=1;
 	httpclientFetch("meuk.spritesserver.nl", "/espbm.php", 1024, cb);
+	wifi_set_sleep_type(
 
 	os_timer_disarm(&tstTimer);
 	os_timer_setfn(&tstTimer, tstTimerCb, NULL);
-	os_timer_arm(&tstTimer, 3000, 0);
+	os_timer_arm(&tstTimer, 1000, 0);
 
 	os_timer_disarm(&klontTimer);
 	os_timer_setfn(&klontTimer, klontTimerCb, NULL);
