@@ -188,7 +188,6 @@ void user_init(void)
 	bmWpos=bmBuff;
 	tcpConnOpen=1;
 	httpclientFetch("meuk.spritesserver.nl", "/espbm.php", 1024, cb);
-	wifi_set_sleep_type(
 
 	os_timer_disarm(&tstTimer);
 	os_timer_setfn(&tstTimer, tstTimerCb, NULL);
