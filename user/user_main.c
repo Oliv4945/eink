@@ -26,7 +26,8 @@ static ETSTimer klontTimer;
 #define INK_VSTART 1
 #define INK_HSEND 2
 #define INK_VSTOP 3
-#define INK_WAITDATA 4
+#define INK_PAUSED 4
+#define INK_RESUME 5
 static int einkState=0;
 static int einkYpos;
 static int einkPat=0;
@@ -39,6 +40,12 @@ static char tcpConnOpen;
 
 void sleepmode();
 
+static int ICACHE_FLASH_ATTR fifoLen() {
+	int l=bmWpos-bmRpos;
+	if (l<0) l+=BMFIFOLEN;
+	return l;
+}
+
 static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 	int x;
 	int rep=0;
@@ -49,16 +56,33 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		einkState=INK_VSTART;
 		REG_SET_BIT(0x3ff00014, BIT(0));
 		os_update_cpu_frequency(160);
-	} else if (einkState==INK_WAITDATA) {
-		if (bmWpos!=bmRpos) {
+	} else if (einkState==INK_PAUSED) {
+		if (fifoLen()>(BMFIFOLEN-17300) || !tcpConnOpen) {
 			//Wake up e-ink display!
 			ioEinkEna(1);
 			os_timer_arm(&tstTimer, 100, 0);
-			einkState=INK_VSTART;
+			einkState=INK_RESUME;
 		} else {
 			//Keep sleeping
 			os_timer_arm(&tstTimer, 100, 0);
 		}
+	} else if (einkState==INK_RESUME) {
+		//Eink has just been powered on to resume writing. Move back to current line.
+		ioEinkVscanStart();
+		REG_SET_BIT(0x3ff00014, BIT(0));
+		os_update_cpu_frequency(160);
+		if (einkYpos!=0) {
+			ioEinkWrite(0);
+			ioEinkClk(800/4);
+			ioEinkVscanWrite(15);
+			for (x=1; x<einkYpos; x++) {
+				ioEinkHscanStart();
+				ioEinkHscanStop();
+				ioEinkVscanSkip();
+			}
+		}
+		einkState=INK_HSEND;
+		os_timer_arm(&tstTimer, 0, 0);
 	} else if (einkState==INK_VSTART) {
 		ioEinkVscanStart();
 		einkYpos=0;
@@ -85,10 +109,12 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 			}
 		} else {
 			//Calculate length of data in fifo
-			x=bmWpos-bmRpos;
-			if (x<0) x+=BMFIFOLEN;
-			if (x<800/4 && tcpConnOpen) {
-				//We need to draw incoming bytes but none available. Sleep.
+			if (fifoLen()<(800/4) && tcpConnOpen) {
+				//Fifo ran dry. Kill eink power and sleep to wait for more data.
+				REG_CLR_BIT(0x3ff00014, BIT(0));
+				os_update_cpu_frequency(80);
+				ioEinkEna(0);
+				einkState=INK_PAUSED;
 				os_timer_arm(&tstTimer, 20, 0);
 			} else {
 				//We can draw stuf. Reschedule ASAP please.
@@ -115,18 +141,21 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		}
 
 	} else if (einkState==INK_VSTOP) {
+		//Skip any remaining lines
+		ioEinkWrite(0);
+		ioEinkClk(800/4);
+		for (x=einkYpos; x<620; x++) {
+			ioEinkHscanStart();
+			ioEinkHscanStop();
+			ioEinkVscanWrite(15);
+		}
+
 		ioEinkVscanStop();
 		if (einkPat==4) {
 			einkState=INK_STARTUP;
 			os_printf("Done displaying image. Sleeping.\n");
 			ioEinkEna(0);
 			sleepmode();
-		} else if (einkPat==3 && bmWpos==bmRpos) {
-			einkPat++;
-			//No data to draw yet. Go to sleep mode.
-			ioEinkEna(0);
-			einkState=INK_WAITDATA;
-			os_timer_arm(&tstTimer, 100, 0);
 		} else {
 			einkPat++;
 			einkState=INK_VSTART;

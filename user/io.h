@@ -10,3 +10,4 @@ void ioEinkVscanWrite(int len);
 void ioEinkVscanStart();
 void ioEinkVscanStop();
 void ioEinkClk(int i);
+void ioEinkVscanSkip();

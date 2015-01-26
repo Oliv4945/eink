@@ -135,6 +135,12 @@ void ioEinkVscanWrite(int len) {
 	os_delay_us(1);
 }
 
+void ioEinkVscanSkip() {
+	sregVal&=~(E_CKV); ioShiftCtl();
+	os_delay_us(1);
+	sregVal|=(E_CKV); ioShiftCtl();
+}
+
 void ICACHE_FLASH_ATTR ioEinkEna(int ena) {
 	if (ena) {
 		gpio_output_set(0, (1<<BOOSTDIS), (1<<BOOSTDIS), 0);
