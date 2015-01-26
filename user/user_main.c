@@ -9,6 +9,11 @@
 #include "io.h"
 #include "httpdclient.h"
 
+
+//For first run: set ESSID and STA mode, no sleep so Vcomm can be adjusted
+
+//#define FIRST
+
 extern uint8_t at_wifiMode;
 void user_init(void);
 
@@ -42,6 +47,8 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		ioEinkEna(1);
 		os_timer_arm(&tstTimer, 100, 0);
 		einkState=INK_VSTART;
+		REG_SET_BIT(0x3ff00014, BIT(0));
+		os_update_cpu_frequency(160);
 	} else if (einkState==INK_WAITDATA) {
 		if (bmWpos!=bmRpos) {
 			//Wake up e-ink display!
@@ -170,11 +177,15 @@ static void ICACHE_FLASH_ATTR klontTimerCb(void *arg) {
 }
 
 void sleepmode() {
-//	system_deep_sleep(20*60*1000*1000);
+#ifdef FIRST
+	ioEinkEna(1);
+#else
+//	wifi_set_sleep_type(MODEM_SLEEP_T);
 	system_deep_sleep(60*1000*1000);
-	os_printf("WtF, after system_deep_sleep()?\n");
-//	while(1);
+#endif
 }
+
+
 
 
 void user_init(void)
@@ -183,6 +194,16 @@ void user_init(void)
 	stdoutInit();
 	ioInit();
 
+#ifdef FIRST
+	//Temp store for new ap info.
+	static struct station_config stconf;
+	os_strncpy((char*)stconf.ssid, "Sprite", 32);
+	os_strncpy((char*)stconf.password, "", 64);
+	wifi_station_disconnect();
+	wifi_station_set_config(&stconf);
+	wifi_station_connect();
+	wifi_set_opmode(1);
+#endif
 
 	bmRpos=bmBuff;
 	bmWpos=bmBuff;
