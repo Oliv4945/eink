@@ -143,17 +143,21 @@ void ioEinkVscanSkip() {
 
 void ICACHE_FLASH_ATTR ioEinkEna(int ena) {
 	if (ena) {
-		gpio_output_set(0, (1<<BOOSTDIS), (1<<BOOSTDIS), 0);
+		gpio_output_set((1<<E_CL)|(1<<E_OE), (1<<BOOSTDIS), (1<<E_CL)|(1<<E_OE)|(1<<BOOSTDIS), 0);
 		os_delay_us(1000);
 		sregVal=VNEG_ENA; ioShiftCtl();
 		os_delay_us(1000);
 		sregVal=VNEG_ENA|VPOS_ENA; ioShiftCtl();
 	} else {
-		sregVal=VNEG_ENA; ioShiftCtl();
-		os_delay_us(1000);
-		sregVal=0; ioShiftCtl();
-		os_delay_us(1000);
-		gpio_output_set((1<<BOOSTDIS), 0, (1<<BOOSTDIS), 0);
+//		ioEinkWrite(0xff);
+//		ioEinkClk(800/4);
+//		ioEinkVscanStop();
+		sregVal=(E_CKV|VPOS_ENA|VNEG_ENA);
+		sregVal&=~VPOS_ENA; ioShiftCtl();
+		os_delay_us(10000);
+		sregVal&=~VNEG_ENA; ioShiftCtl();
+		os_delay_us(100000);
+		gpio_output_set((1<<BOOSTDIS), (1<<E_CL)|(1<<E_OE), (1<<E_CL)|(1<<E_OE)|(1<<BOOSTDIS), 0);
 	}
 }
 
