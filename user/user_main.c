@@ -36,6 +36,11 @@ static int einkPat=0;
 static char bmBuff[BMFIFOLEN];
 static char *bmRpos, *bmWpos;
 
+#define WMARK_RESTART (BMFIFOLEN-20000)
+#define WMARK_PLUG (BMFIFOLEN-17300)
+#define WMARK_UNPLUG (1024)
+static int plugged=0;
+
 #define TCPSTATE_CLOSED 0
 #define TCPSTATE_HEADER 1
 #define TCPSTATE_DATA 2
@@ -67,7 +72,7 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 		REG_SET_BIT(0x3ff00014, BIT(0));
 		os_update_cpu_frequency(160);
 	} else if (einkState==INK_PAUSED) {
-		if (fifoLen()>(BMFIFOLEN-17300) || !tcpConnState) {
+		if (fifoLen()>(WMARK_RESTART) || !tcpConnState) {
 			//Wake up e-ink display!
 			ioEinkEna(1);
 			os_timer_arm(&tstTimer, 100, 0);
@@ -123,6 +128,10 @@ static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
 			}
 		} else {
 			//Calculate length of data in fifo
+			if (plugged && fifoLen()<WMARK_UNPLUG) {
+				espconn_recv_unhold(httpclientGetConn());
+				plugged=0;
+			}
 			if (fifoLen()<(800/4) && tcpConnState) {
 				//Fifo ran dry. Kill eink power and sleep to wait for more data.
 				ioEinkWrite(0xaa);
@@ -187,6 +196,10 @@ void cb(char* data, int len) {
 			}
 			if (bmWpos==bmRpos) {
 				os_printf("fifo: OVERFLOW!\n");
+			}
+			if (!plugged && fifoLen()>WMARK_PLUG) {
+				espconn_recv_hold(httpclientGetConn());
+				plugged=1;
 			}
 		}
 	}
