@@ -1,8 +1,8 @@
 
 //Called when the eink pixel buffer is running low
-typedef int (*EinkNeedDataCb)();
+typedef void (EinkNeedDataCb)();
 //Called when eink is done displaying stuff
-typedef int (*EinkDoneCb)();
+typedef void (EinkDoneCb)();
 
 //Push 8 bits of data into the pixel buffer. Returns amount of buffer space left.
 int einkPushPixels(char pixels);

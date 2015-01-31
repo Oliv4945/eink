@@ -11,8 +11,8 @@
 
 
 static ETSTimer einkTimer;
-static EinkNeedDataCb needDataCb=NULL;
-static EinkDoneCb doneCb=NULL;
+static EinkNeedDataCb *needDataCb=NULL;
+static EinkDoneCb *doneCb=NULL;
 
 #define INK_STARTUP 0
 #define INK_VSTART 1
@@ -24,10 +24,14 @@ static int einkState=0;
 static int einkYpos;
 static int einkPat=0;
 
-#define BMFIFOLEN (1024*32)
+#define BMFIFOLEN (1024*24)
 static char bmBuff[BMFIFOLEN];
 static char *bmRpos, *bmWpos;
 
+#define WMARK_RESTART (BMFIFOLEN-20000)
+#define WMARK_PLUG (BMFIFOLEN-17300)
+#define WMARK_UNPLUG (1024)
+static int plugged=0;
 static char dataEnded;
 
 static int ICACHE_FLASH_ATTR fifoLen() {
@@ -54,7 +58,7 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 		REG_SET_BIT(0x3ff00014, BIT(0));
 		os_update_cpu_frequency(160);
 	} else if (einkState==INK_PAUSED) {
-		if (fifoLen()>(BMFIFOLEN-17300) || dataEnded) {
+		if (fifoLen()>(WMARK_RESTART) || dataEnded) {
 			//Wake up e-ink display!
 			ioEinkEna(1);
 			os_timer_arm(&einkTimer, 100, 0);
@@ -109,7 +113,10 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 				einkState=INK_VSTOP;
 			}
 		} else {
-			//Calculate length of data in fifo
+			if (plugged && fifoLen()<WMARK_UNPLUG) {
+				if (!dataEnded && needDataCb!=NULL) needDataCb();
+				plugged=0;
+			}
 			if (fifoLen()<(800/4) && !dataEnded) {
 				//Fifo ran dry. Kill eink power and sleep to wait for more data.
 				ioEinkWrite(0xaa);
@@ -123,7 +130,7 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 			} else {
 				//We can draw stuf. Reschedule ASAP please.
 				os_timer_arm(&einkTimer, 0, 0);
-				if (fifoLen()<((800/4)*2) && !dataEnded && needDataCb!=NULL) needDataCb();
+				if (fifoLen()<(WMARK_UNPLUG) && !dataEnded && needDataCb!=NULL) needDataCb();
 				ioEinkHscanStart();
 
 				for (x=0; x<800; x+=8) {
@@ -156,13 +163,14 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 }
 
 int einkPushPixels(char d) {
-	*bmWpos++=data[x];
+	*bmWpos++=d;
 	if (bmWpos>&bmBuff[BMFIFOLEN-1]) {
 		bmWpos=bmBuff;
 	}
 	if (bmWpos==bmRpos) {
 		os_printf("fifo: OVERFLOW!\n");
 	}
+	return fifoLen();
 }
 
 void einkDataEnd() {

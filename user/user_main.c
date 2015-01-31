@@ -34,6 +34,8 @@ void httpclientCb(char* data, int len) {
 	int bufLeft=65535;
 	if (len==0) {
 		tcpConnState=TCPSTATE_CLOSED;
+		einkDataEnd();
+		return;
 	}
 	for (x=0; x<len; x++) {
 		if (tcpConnState==TCPSTATE_HEADER) {
@@ -48,9 +50,6 @@ void httpclientCb(char* data, int len) {
 void tcpEinkNeedData() {
 	espconn_recv_unhold(httpclientGetConn());
 }
-
-
-static struct station_config stconf;
 
 void sleepmode() {
 #ifdef FIRST
@@ -68,8 +67,7 @@ void einkDoneCb() {
 
 HttpdBuiltInUrl builtInUrls[]={
 	{"/", cgiRedirect, "/wifi/"},
-	{"/index.tpl", cgiEspFsTemplate, tplCounter},
-	{"/led.cgi", cgiLed, NULL},
+//	{"/index.tpl", cgiEspFsTemplate, tplCounter},
 	{"/wifi", cgiRedirect, "/wifi/wifi.tpl"},
 	{"/wifi/", cgiRedirect, "/wifi/wifi.tpl"},
 	{"/wifi/wifiscan.cgi", cgiWiFiScan, NULL},
@@ -88,18 +86,18 @@ void user_init(void)
 	stdoutInit();
 	ioInit();
 
-/*
+
 	system_rtc_mem_read(0, &rtcmagic, 4);
 	if (rtcmagic!=RTC_MAGIC) {
 		rtcmagic=RTC_MAGIC;
 		system_rtc_mem_write(0, &rtcmagic, 4);
 		//Magic word has fallen out of the RTC. Probably means the battery has been changed or
 		//taken out. Go into reconfig mode.
-		wifi_set_opmode(2);
-		httpdInit(builtInUrls, 80);
+//		wifi_set_opmode(2);
+//		httpdInit(builtInUrls, 80);
 	}
 
-*/
+
 //	wifi_set_opmode(1);
 
 	tcpConnState=TCPSTATE_HEADER;

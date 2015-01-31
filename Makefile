@@ -36,6 +36,7 @@ TARGET		= einkdisp
 MODULES		= driver user
 EXTRA_INCDIR	= include \
 		. \
+		lib/heatshrink/ \
 		$(SDK_EXTRA_INCLUDES)
 
 # libraries used in this project, mainly provided by the SDK
