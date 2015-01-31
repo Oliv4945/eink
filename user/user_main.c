@@ -9,35 +9,18 @@
 #include "io.h"
 #include "httpdclient.h"
 #include "eink.h"
-
-//For first run: set ESSID and STA mode, no sleep so Vcomm can be adjusted
-
-//#define FIRST
+#include "httpd.h"
+#include "cgiwifi.h"
+#include "httpdespfs.h"
 
 void user_init(void);
-
 static ETSTimer wdtTimer;
+void sleepmode();
 
-void httpclientCb(char* data, int len) {
-	int x;
-	int bufLeft;
-//	os_printf("Data: %d bytes\n", len);
-	if (len==0) {
-		tcpConnState=TCPSTATE_CLOSED;
-	}
-	for (x=0; x<len; x++) {
-		if (tcpConnState==TCPSTATE_HEADER) {
-			if (data[x]==0) tcpConnState=TCPSTATE_DATA;
-		} else if (tcpConnState==TCPSTATE_DATA) {
-			bufLeft=einkPushPixels();
-		}
-	}
-}
-
-void tcpEinkNeedData() {
-	
-}
-
+#define TCPSTATE_CLOSED 0
+#define TCPSTATE_HEADER 1
+#define TCPSTATE_DATA 2
+int tcpConnState;
 
 static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	os_printf("Wdt. This takes too long. Go to sleep.\n");
@@ -45,9 +28,29 @@ static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	sleepmode();
 }
 
+
+void httpclientCb(char* data, int len) {
+	int x;
+	int bufLeft=65535;
+	if (len==0) {
+		tcpConnState=TCPSTATE_CLOSED;
+	}
+	for (x=0; x<len; x++) {
+		if (tcpConnState==TCPSTATE_HEADER) {
+			if (data[x]==0) tcpConnState=TCPSTATE_DATA;
+		} else if (tcpConnState==TCPSTATE_DATA) {
+			bufLeft=einkPushPixels(data[x]);
+		}
+	}
+	if (bufLeft<(1450*5)) espconn_recv_hold(httpclientGetConn());
+}
+
+void tcpEinkNeedData() {
+	espconn_recv_unhold(httpclientGetConn());
+}
+
+
 static struct station_config stconf;
-
-
 
 void sleepmode() {
 #ifdef FIRST
@@ -85,8 +88,7 @@ void user_init(void)
 	stdoutInit();
 	ioInit();
 
-	EinkNeedDataCb *cb
-
+/*
 	system_rtc_mem_read(0, &rtcmagic, 4);
 	if (rtcmagic!=RTC_MAGIC) {
 		rtcmagic=RTC_MAGIC;
@@ -97,16 +99,8 @@ void user_init(void)
 		httpdInit(builtInUrls, 80);
 	}
 
-#ifdef FIRST
-	//Temp store for new ap info.
-	static struct station_config stconf;
-	os_strncpy((char*)stconf.ssid, "Sprite", 32);
-	os_strncpy((char*)stconf.password, "", 64);
-	wifi_station_disconnect();
-	wifi_station_set_config(&stconf);
-	wifi_station_connect();
-	wifi_set_opmode(1);
-#endif
+*/
+//	wifi_set_opmode(1);
 
 	tcpConnState=TCPSTATE_HEADER;
 	httpclientFetch("meuk.spritesserver.nl", "/espbm.php", 1024, httpclientCb);

@@ -76,8 +76,13 @@ static void ICACHE_FLASH_ATTR httpServerFoundCb(const char *name, ip_addr_t *ip,
 	espconn_connect(conn);
 }
 
-void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*, int)) {
 	static struct espconn conn;
+
+ICACHE_FLASH_ATTR struct espconn *httpclientGetConn() {
+	return &conn;
+}
+
+void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*, int)) {
 	static ip_addr_t ip;
 	callback=cb;
 	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", hcloc, hcserver);
