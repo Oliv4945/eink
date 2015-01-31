@@ -95,7 +95,6 @@ HttpdBuiltInUrl builtInUrls[]={
 	{"/wifiscan.cgi", cgiWiFiScan, NULL},
 	{"/wifi.tpl", cgiEspFsTemplate, tplWlan},
 	{"/connect.cgi", cgiWiFiConnect, NULL},
-	{"/setmode.cgi", cgiWifiSetMode, NULL},
 	{"*", cgiEspFsHook, NULL}, //Catch-all cgi function for the filesystem
 	{NULL, NULL, NULL}
 };
@@ -125,7 +124,7 @@ void user_init(void)
 		//taken out. Go into reconfig mode.
 
 		einkFile=espFsOpen("apconnect.bm");
-		einkDisplay(fileEinkNeedData, fileEinkDoneCb);
+		einkDisplay(2048, fileEinkNeedData, fileEinkDoneCb);
 
 		httpdInit(builtInUrls, 80);
 
@@ -145,7 +144,7 @@ void user_init(void)
 
 	os_printf("Datasource %s\n", myConfig.url);
 	httpclientFetch(myConfig.url, httpclientCb);
-	einkDisplay(tcpEinkNeedData, einkDoneCb);
+	einkDisplay(24*1024, tcpEinkNeedData, einkDoneCb);
 
 	os_timer_disarm(&wdtTimer);
 	os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);

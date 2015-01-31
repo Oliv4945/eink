@@ -8,7 +8,7 @@
 #include "espconn.h"
 #include "io.h"
 #include "httpdclient.h"
-
+#include "mem.h"
 
 static ETSTimer einkTimer;
 static EinkNeedDataCb *needDataCb=NULL;
@@ -24,19 +24,18 @@ static int einkState=0;
 static int einkYpos;
 static int einkPat=0;
 
-#define BMFIFOLEN (1024*20)
-static char bmBuff[BMFIFOLEN];
+static char *bmBuff;
 static char *bmRpos, *bmWpos;
+static int bmfifolen;
 
-#define WMARK_RESTART (BMFIFOLEN-20000)
-#define WMARK_PLUG (BMFIFOLEN-17300)
+#define WMARK_RESTART (20000)
 #define WMARK_UNPLUG (1024)
 static int plugged=0;
 static char dataEnded;
 
 static int ICACHE_FLASH_ATTR fifoLen() {
 	int l=bmWpos-bmRpos;
-	if (l<0) l+=BMFIFOLEN;
+	if (l<0) l+=bmfifolen;
 	return l;
 }
 
@@ -60,7 +59,7 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 		REG_SET_BIT(0x3ff00014, BIT(0));
 		os_update_cpu_frequency(160);
 	} else if (einkState==INK_PAUSED) {
-		if (fifoLen()>(WMARK_RESTART) || dataEnded) {
+		if (fifoLen()>(bmfifolen-WMARK_RESTART) || dataEnded) {
 			//Wake up e-ink display!
 			ioEinkEna(1);
 			os_timer_arm(&einkTimer, 100, 0);
@@ -138,7 +137,7 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 				for (x=0; x<800; x+=8) {
 					ioEinkWrite(cmdSet[(*bmRpos)>>4]);
 					ioEinkWrite(cmdSet[(*bmRpos++)&0xf]);
-					if (bmRpos>&bmBuff[BMFIFOLEN-1]) bmRpos=bmBuff;
+					if (bmRpos>&bmBuff[bmfifolen-1]) bmRpos=bmBuff;
 				}
 				ioEinkHscanStop();
 				ioEinkVscanWrite(115);
@@ -155,6 +154,7 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 		if (einkPat==4) {
 			einkState=INK_STARTUP;
 			ioEinkEna(0);
+			os_free(bmBuff);
 			if (doneCb!=NULL) doneCb();
 		} else {
 			einkPat++;
@@ -166,7 +166,7 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 
 int einkPushPixels(char d) {
 	*bmWpos++=d;
-	if (bmWpos>&bmBuff[BMFIFOLEN-1]) {
+	if (bmWpos>&bmBuff[bmfifolen-1]) {
 		bmWpos=bmBuff;
 	}
 	if (bmWpos==bmRpos) {
@@ -179,12 +179,14 @@ void einkDataEnd() {
 	dataEnded=1;
 }
 
-void einkDisplay(EinkNeedDataCb ncb, EinkDoneCb dcb) {
+void einkDisplay(int fifosz, EinkNeedDataCb ncb, EinkDoneCb dcb) {
 	needDataCb=ncb;
 	doneCb=dcb;
 	dataEnded=0;
+	bmBuff=os_malloc(fifosz);
 	bmRpos=bmBuff;
 	bmWpos=bmBuff;
+	bmfifolen=fifosz;
 	os_timer_disarm(&einkTimer);
 	os_timer_setfn(&einkTimer, einkTimerCb, NULL);
 	os_timer_arm(&einkTimer, 10, 0);

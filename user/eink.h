@@ -10,7 +10,7 @@ int einkPushPixels(char pixels);
 void einkDataEnd();
 
 //Start displaying data.
-void einkDisplay(EinkNeedDataCb needDataCb, EinkDoneCb doneCb);
+void einkDisplay(int bufsz, EinkNeedDataCb needDataCb, EinkDoneCb doneCb);
 
 
 
