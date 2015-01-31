@@ -15,6 +15,7 @@ static char hdr[1024];
 static int state;
 static int outpos;
 static char host[128];
+static int port;
 static char path[512];
 void (*callback)(char *data, int len);
 
@@ -90,7 +91,7 @@ static void ICACHE_FLASH_ATTR httpServerFoundCb(const char *name, ip_addr_t *ip,
 	conn->state=ESPCONN_NONE;
 	conn->proto.tcp=&tcp;
 	conn->proto.tcp->local_port=espconn_port();
-	conn->proto.tcp->remote_port=80;
+	conn->proto.tcp->remote_port=port;
 	os_memcpy(conn->proto.tcp->remote_ip, &ip->addr, 4);
 
 	espconn_regist_connectcb(conn, httpclientConnectedCb);
@@ -108,8 +109,16 @@ ICACHE_FLASH_ATTR struct espconn *httpclientGetConn() {
 void httpclientFetch(char *url, void (*cb)(char*, int)) {
 	static ip_addr_t ip;
 	int x, i=0;
-	for (x=7; url[x]!=0 && url[x]!='/'; x++) host[i++]=url[x];
+
+	port=80;
+	//Parse http://host[:port]/bla into host, port, path
+	for (x=7; url[x]!=0 && url[x]!='/' && url[x]!=':'; x++) host[i++]=url[x];
 	host[i]=0;
+	if (url[x]==':') {
+		x++;
+		port=atoi(&url[x]);
+		while (url[x]!='/' && url[x]!=0) x++;
+	}
 	strcpy(path, &url[x]);
 	callback=cb;
 	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
