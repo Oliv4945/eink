@@ -11,6 +11,8 @@
 static char hdr[1024];
 static int state;
 static int outpos;
+static char host[128];
+static char path[512];
 void (*callback)(char *data, int len);
 
 static void ICACHE_FLASH_ATTR httpclientParseChar(struct espconn *conn, char c) {
@@ -58,7 +60,7 @@ static void ICACHE_FLASH_ATTR httpServerFoundCb(const char *name, ip_addr_t *ip,
 	static esp_tcp tcp;
 	struct espconn *conn=(struct espconn *)arg;
 	if (ip==NULL) {
-		os_printf("Huh? Nslookup of irc server failed :/ Trying again...\n");
+		os_printf("Huh? Nslookup of server failed :/\n");
 	}
 	os_printf("httpclient: found ip\n");
 
@@ -82,8 +84,12 @@ ICACHE_FLASH_ATTR struct espconn *httpclientGetConn() {
 	return &conn;
 }
 
-void httpclientFetch(char *hcserver, char *hcloc, int retbufsz, void (*cb)(char*, int)) {
+void httpclientFetch(char *url, char *hcloc, void (*cb)(char*, int)) {
 	static ip_addr_t ip;
+	int x, i=0;
+	for (x=7; url[x]!=0 && url[x]!='/'; x++) host[i++]=url[x];
+	host[i]=0;
+	strcpy(path, &url[x]);
 	callback=cb;
 	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", hcloc, hcserver);
 	os_printf("httpclient: %s", hdr);
