@@ -24,7 +24,7 @@ static int einkState=0;
 static int einkYpos;
 static int einkPat=0;
 
-#define BMFIFOLEN (1024*24)
+#define BMFIFOLEN (1024*20)
 static char bmBuff[BMFIFOLEN];
 static char *bmRpos, *bmWpos;
 
@@ -50,6 +50,8 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 			64,1+64,4+64,1+4+64,
 			16+64,1+16+64,4+16+64,1+4+16+64
 		};
+	if (fifoLen()<(WMARK_UNPLUG) && !dataEnded && needDataCb!=NULL) needDataCb();
+
 	if (einkState==INK_STARTUP) {
 		einkPat=0;
 		ioEinkEna(1);

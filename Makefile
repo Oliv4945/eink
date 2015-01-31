@@ -158,7 +158,7 @@ clean:
 	$(Q) rm -rf $(FW_BASE)
 
 
-webpages.espfs: html/ html/wifi/ mkespfsimage/mkespfsimage
+webpages.espfs: html/ mkespfsimage/mkespfsimage
 	cd html; find | ../mkespfsimage/mkespfsimage > ../webpages.espfs; cd ..
 
 mkespfsimage/mkespfsimage: mkespfsimage/

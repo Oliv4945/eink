@@ -1,3 +1,5 @@
+//Shitty http client thing
+
 #include "espmissingincludes.h"
 #include "c_types.h"
 #include "user_interface.h"
@@ -84,14 +86,14 @@ ICACHE_FLASH_ATTR struct espconn *httpclientGetConn() {
 	return &conn;
 }
 
-void httpclientFetch(char *url, char *hcloc, void (*cb)(char*, int)) {
+void httpclientFetch(char *url, void (*cb)(char*, int)) {
 	static ip_addr_t ip;
 	int x, i=0;
 	for (x=7; url[x]!=0 && url[x]!='/'; x++) host[i++]=url[x];
 	host[i]=0;
 	strcpy(path, &url[x]);
 	callback=cb;
-	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", hcloc, hcserver);
+	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
 	os_printf("httpclient: %s", hdr);
-	espconn_gethostbyname(&conn, hcserver, &ip, httpServerFoundCb);
+	espconn_gethostbyname(&conn, host, &ip, httpServerFoundCb);
 }

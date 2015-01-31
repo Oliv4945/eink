@@ -19,9 +19,7 @@ Cgi/template routines for the /wifi url.
 #include "httpd.h"
 #include "io.h"
 #include "espmissingincludes.h"
-
-//Enable this to disallow any changes in AP settings
-//#define DEMO_MODE
+#include "config.h"
 
 //WiFi access point data
 typedef struct {
@@ -188,6 +186,8 @@ int ICACHE_FLASH_ATTR cgiWiFiConnect(HttpdConnData *connData) {
 	
 	httpdFindArg(connData->postBuff, "essid", essid, sizeof(essid));
 	httpdFindArg(connData->postBuff, "passwd", passwd, sizeof(passwd));
+	httpdFindArg(connData->postBuff, "datasource", myConfig.url, sizeof(myConfig.url));
+	configSave();
 
 	os_strncpy((char*)stconf.ssid, essid, 32);
 	os_strncpy((char*)stconf.password, passwd, 64);
@@ -196,36 +196,8 @@ int ICACHE_FLASH_ATTR cgiWiFiConnect(HttpdConnData *connData) {
 	//Schedule disconnect/connect
 	os_timer_disarm(&reassTimer);
 	os_timer_setfn(&reassTimer, reassTimerCb, NULL);
-//Set to 0 if you want to disable the actual reconnecting bit
-#ifdef DEMO_MODE
-	httpdRedirect(connData, "/wifi");
-#else
 	os_timer_arm(&reassTimer, 1000, 0);
 	httpdRedirect(connData, "connecting.html");
-#endif
-	return HTTPD_CGI_DONE;
-}
-
-//This cgi uses the routines above to connect to a specific access point with the
-//given ESSID using the given password.
-int ICACHE_FLASH_ATTR cgiWifiSetMode(HttpdConnData *connData) {
-	int len;
-	char buff[1024];
-	
-	if (connData->conn==NULL) {
-		//Connection aborted. Clean up.
-		return HTTPD_CGI_DONE;
-	}
-
-	len=httpdFindArg(connData->getArgs, "mode", buff, sizeof(buff));
-	if (len!=0) {
-		os_printf("cgiWifiSetMode: %s\n", buff);
-#ifndef DEMO_MODE
-		wifi_set_opmode(atoi(buff));
-		system_restart();
-#endif
-	}
-	httpdRedirect(connData, "/wifi");
 	return HTTPD_CGI_DONE;
 }
 
@@ -247,13 +219,8 @@ void ICACHE_FLASH_ATTR tplWlan(HttpdConnData *connData, char *token, void **arg)
 		os_strcpy(buff, (char*)stconf.ssid);
 	} else if (os_strcmp(token, "WiFiPasswd")==0) {
 		os_strcpy(buff, (char*)stconf.password);
-	} else if (os_strcmp(token, "WiFiapwarn")==0) {
-		x=wifi_get_opmode();
-		if (x==2) {
-			os_strcpy(buff, "<b>Can't scan in this mode.</b> Click <a href=\"setmode.cgi?mode=3\">here</a> to go to STA+AP mode.");
-		} else {
-			os_strcpy(buff, "Click <a href=\"setmode.cgi?mode=2\">here</a> to go to standalone AP mode.");
-		}
+	} else if (os_strcmp(token, "datasource")==0) {
+		os_strcpy(buff, myConfig.url);
 	}
 	httpdSend(connData, buff, -1);
 }

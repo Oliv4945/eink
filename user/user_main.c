@@ -12,6 +12,8 @@
 #include "httpd.h"
 #include "cgiwifi.h"
 #include "httpdespfs.h"
+#include "espfs.h"
+#include "config.h"
 
 void user_init(void);
 static ETSTimer wdtTimer;
@@ -28,11 +30,13 @@ static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	sleepmode();
 }
 
+char tcpPlugged=0;
 
 void httpclientCb(char* data, int len) {
 	int x;
 	int bufLeft=65535;
-	if (len==0) {
+	if (data==NULL) {
+		os_printf("Http conn closed.\n");
 		tcpConnState=TCPSTATE_CLOSED;
 		einkDataEnd();
 		return;
@@ -44,11 +48,33 @@ void httpclientCb(char* data, int len) {
 			bufLeft=einkPushPixels(data[x]);
 		}
 	}
-	if (bufLeft<(1450*5)) espconn_recv_hold(httpclientGetConn());
+	if (bufLeft<(1450*5) && !tcpPlugged) {
+		espconn_recv_hold(httpclientGetConn());
+		tcpPlugged=1;
+	}
 }
 
 void tcpEinkNeedData() {
-	espconn_recv_unhold(httpclientGetConn());
+	if (tcpPlugged) {
+		espconn_recv_unhold(httpclientGetConn());
+		tcpPlugged=0;
+	}
+}
+
+EspFsFile *einkFile;
+
+void fileEinkNeedData() {
+	char data[128];
+	int x, l;
+	l=espFsRead(einkFile, data, sizeof(data));
+	for (x=0; x<l; x++) {
+		einkPushPixels(data[x]);
+	}
+	if (l<sizeof(data)) einkDataEnd();
+}
+
+void fileEinkDoneCb() {
+	espFsClose(einkFile);
 }
 
 void sleepmode() {
@@ -64,16 +90,12 @@ void einkDoneCb() {
 	sleepmode();
 }
 
-
 HttpdBuiltInUrl builtInUrls[]={
-	{"/", cgiRedirect, "/wifi/"},
-//	{"/index.tpl", cgiEspFsTemplate, tplCounter},
-	{"/wifi", cgiRedirect, "/wifi/wifi.tpl"},
-	{"/wifi/", cgiRedirect, "/wifi/wifi.tpl"},
-	{"/wifi/wifiscan.cgi", cgiWiFiScan, NULL},
-	{"/wifi/wifi.tpl", cgiEspFsTemplate, tplWlan},
-	{"/wifi/connect.cgi", cgiWiFiConnect, NULL},
-	{"/wifi/setmode.cgi", cgiWifiSetMode, NULL},
+	{"/", cgiRedirect, "/wifi.tpl"},
+	{"/wifiscan.cgi", cgiWiFiScan, NULL},
+	{"/wifi.tpl", cgiEspFsTemplate, tplWlan},
+	{"/connect.cgi", cgiWiFiConnect, NULL},
+	{"/setmode.cgi", cgiWifiSetMode, NULL},
 	{"*", cgiEspFsHook, NULL}, //Catch-all cgi function for the filesystem
 	{NULL, NULL, NULL}
 };
@@ -83,26 +105,46 @@ HttpdBuiltInUrl builtInUrls[]={
 void user_init(void)
 {
 	int rtcmagic;
+
 	stdoutInit();
 	ioInit();
+	configLoad();
 
-
-	system_rtc_mem_read(0, &rtcmagic, 4);
+	system_rtc_mem_read(128, &rtcmagic, 4);
 	if (rtcmagic!=RTC_MAGIC) {
+		//Make sure we're in STA+AP mode
+		if (wifi_get_opmode()!=3) {
+			wifi_set_opmode(3);
+			system_restart();
+			return;
+		}
+		//For the next time: start in normal mode
 		rtcmagic=RTC_MAGIC;
-		system_rtc_mem_write(0, &rtcmagic, 4);
+		system_rtc_mem_write(128, &rtcmagic, 4);
 		//Magic word has fallen out of the RTC. Probably means the battery has been changed or
 		//taken out. Go into reconfig mode.
-//		wifi_set_opmode(2);
-//		httpdInit(builtInUrls, 80);
+
+		einkFile=espFsOpen("apconnect.bm");
+		einkDisplay(fileEinkNeedData, fileEinkDoneCb);
+
+		httpdInit(builtInUrls, 80);
+
+		os_timer_disarm(&wdtTimer);
+		os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);
+		os_timer_arm(&wdtTimer, 120000, 0); //shut down after 120 seconds
+		return;
+	}
+	
+	if (wifi_get_opmode()!=1) {
+		wifi_set_opmode(1);
+		system_restart();
+		return;
 	}
 
-
-//	wifi_set_opmode(1);
-
 	tcpConnState=TCPSTATE_HEADER;
-	httpclientFetch("meuk.spritesserver.nl", "/espbm.php", 1024, httpclientCb);
 
+	os_printf("Datasource %s\n", myConfig.url);
+	httpclientFetch(myConfig.url, httpclientCb);
 	einkDisplay(tcpEinkNeedData, einkDoneCb);
 
 	os_timer_disarm(&wdtTimer);
