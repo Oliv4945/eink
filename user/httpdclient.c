@@ -6,10 +6,11 @@
 #include "espconn.h"
 #include "mem.h"
 #include "osapi.h"
+#include "httpdclient.h"
 
 #define STATE_HDR 0
 #define STATE_BODY 1
-
+#define STATE_REDIR 2
 static char hdr[1024];
 static int state;
 static int outpos;
@@ -17,14 +18,32 @@ static char host[128];
 static char path[512];
 void (*callback)(char *data, int len);
 
+static struct espconn conn;
+
 static void ICACHE_FLASH_ATTR httpclientParseChar(struct espconn *conn, char c) {
 	static char last[4];
+	int x;
 	if (state==STATE_HDR) {
 		last[0]=last[1];
 		last[1]=last[2];
 		last[2]=last[3];
 		last[3]=c;
 		if (last[0]=='\r' && last[1]=='\n' && last[2]=='\r' && last[3]=='\n') state=STATE_BODY;
+		if (c=='\r' || c=='\n') {
+			if (os_strncmp(hdr, "Location:", 9)==0) {
+				x=9;
+				while (hdr[x]!='h' && hdr[x]!=0) x++;
+				os_printf("Following redirect to %s\n", hdr);
+				httpclientFetch(&hdr[x], callback);
+				espconn_disconnect(conn);
+				state=STATE_REDIR;
+				return;
+			}
+		} else {
+			x=os_strlen(hdr);
+			hdr[x]=c;
+			hdr[x+1]=0;
+		}
 	}
 }
 
@@ -35,6 +54,7 @@ static void ICACHE_FLASH_ATTR ircRecvCb(void *arg, char *data, unsigned short le
 		for (x=0; x<len; x++) {
 			httpclientParseChar(conn, data[x]);
 			if (state==STATE_BODY) break;
+			if (state==STATE_REDIR) return;
 		}
 		//Do the callback on the remaining data.
 		if (x!=len) callback(data+x, len-x);
@@ -80,7 +100,6 @@ static void ICACHE_FLASH_ATTR httpServerFoundCb(const char *name, ip_addr_t *ip,
 	espconn_connect(conn);
 }
 
-	static struct espconn conn;
 
 ICACHE_FLASH_ATTR struct espconn *httpclientGetConn() {
 	return &conn;
@@ -95,5 +114,6 @@ void httpclientFetch(char *url, void (*cb)(char*, int)) {
 	callback=cb;
 	os_sprintf(hdr, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
 	os_printf("httpclient: %s", hdr);
+	hdr[0]=0;
 	espconn_gethostbyname(&conn, host, &ip, httpServerFoundCb);
 }
