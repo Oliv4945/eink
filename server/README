@@ -1,0 +1,5 @@
+This is a small pixel server for the eink display. Load it up in PhantomJS and it will
+render any page you pass it. For example, to display Googles homepage, with this server
+running on the machine server.local, enter the following url into the eink datasource field:
+http://server.local/?http://google.com/
+
