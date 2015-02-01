@@ -24,18 +24,34 @@ void sleepmode();
 #define TCPSTATE_DATA 2
 int tcpConnState;
 
+
+//This is used to make sure we use the espconn_recv_[un]hold calls only
+//once. The stack trips up when called multiple times.
+char tcpPlugged=0;
+
+struct __attribute__ ((__packed__)) EinkHeader {
+	uint8_t ver;			//Header version. Only v1 is supported atm.
+	uint16_t sleeptime;		//sleep time, in seconds
+	uint8_t bmtype;			//bitmap type. Only 0 (1bpp, full refresh) is supported for now. Ignored.
+} einkHeader;
+int einkHeaderPos;
+char einkHeaderIsValid;
+
+//Watchdog timer thing. Shuts down the device when everything takes
+//too long, eg due to network outages.
 static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	os_printf("Wdt. This takes too long. Go to sleep.\n");
 	ioEinkEna(0);
 	sleepmode();
 }
 
-char tcpPlugged=0;
 
+//Called when the http client receives something
 void httpclientCb(char* data, int len) {
 	int x;
 	int bufLeft=65535;
 	if (data==NULL) {
+		//We're done here.
 		os_printf("Http conn closed.\n");
 		tcpConnState=TCPSTATE_CLOSED;
 		einkDataEnd();
@@ -43,7 +59,15 @@ void httpclientCb(char* data, int len) {
 	}
 	for (x=0; x<len; x++) {
 		if (tcpConnState==TCPSTATE_HEADER) {
-			if (data[x]==0) tcpConnState=TCPSTATE_DATA;
+			((char*)&einkHeader)[einkHeaderPos++]=data[x];
+			if (einkHeaderPos>=sizeof(einkHeader)) {
+				if (einkHeader.ver==1) {
+					einkHeaderIsValid=1;
+				} else {
+					os_printf("Don't understand header ver %d.\n", einkHeader.ver);
+				}
+				tcpConnState=TCPSTATE_DATA;
+			}
 		} else if (tcpConnState==TCPSTATE_DATA) {
 			bufLeft=einkPushPixels(data[x]);
 		}
@@ -81,8 +105,13 @@ void sleepmode() {
 #ifdef FIRST
 	ioEinkEna(1);
 #else
-//	wifi_set_sleep_type(MODEM_SLEEP_T);
-	system_deep_sleep(60*1000*1000);
+	if (einkHeaderIsValid) {
+		//Sleep the amount of time indicated.
+		system_deep_sleep(einkHeader.sleeptime*1000*1000);
+	} else {
+		//Default to 60sec sleep
+		system_deep_sleep(60*1000*1000);
+	}
 #endif
 }
 
@@ -140,9 +169,10 @@ void user_init(void)
 		return;
 	}
 
-	tcpConnState=TCPSTATE_HEADER;
-
 	os_printf("Datasource %s\n", myConfig.url);
+	tcpConnState=TCPSTATE_HEADER;
+	einkHeaderPos=0;
+	einkHeaderIsValid=0;
 	httpclientFetch(myConfig.url, httpclientCb);
 	einkDisplay(24*1024, tcpEinkNeedData, einkDoneCb);
 
