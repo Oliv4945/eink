@@ -46,7 +46,10 @@ static void ICACHE_FLASH_ATTR httpclientParseChar(struct espconn *conn, char c) 
 		last[1]=last[2];
 		last[2]=last[3];
 		last[3]=c;
-		if (last[0]=='\r' && last[1]=='\n' && last[2]=='\r' && last[3]=='\n') state=STATE_BODY;
+		if (last[0]=='\r' && last[1]=='\n' && last[2]=='\r' && last[3]=='\n') {
+			state=STATE_BODY;
+			return;
+		}
 		if (c=='\r' || c=='\n') {
 			os_printf("Header %s\n", hdr);
 			if (os_strncmp(hdr, "Location:", 9)==0) {
@@ -80,7 +83,10 @@ static void ICACHE_FLASH_ATTR ircRecvCb(void *arg, char *data, unsigned short le
 			}
 		}
 		//Do the callback on the remaining data.
-		if (x!=len) callback(data+x, len-x);
+		if (x!=len) {
+			x++;
+			callback(data+x, len-x);
+		}
 	} else {
 		callback(data, len);
 	}
