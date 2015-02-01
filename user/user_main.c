@@ -8,265 +8,173 @@
 #include "espconn.h"
 #include "io.h"
 #include "httpdclient.h"
+#include "eink.h"
+#include "httpd.h"
+#include "cgiwifi.h"
+#include "httpdespfs.h"
+#include "espfs.h"
+#include "config.h"
 
-
-//For first run: set ESSID and STA mode, no sleep so Vcomm can be adjusted
-
-//#define FIRST
-
-extern uint8_t at_wifiMode;
 void user_init(void);
-
-static ETSTimer tstTimer;
 static ETSTimer wdtTimer;
-static ETSTimer klontTimer;
-
-
-#define INK_STARTUP 0
-#define INK_VSTART 1
-#define INK_HSEND 2
-#define INK_VSTOP 3
-#define INK_PAUSED 4
-#define INK_RESUME 5
-static int einkState=0;
-static int einkYpos;
-static int einkPat=0;
-
-#define BMFIFOLEN (1024*32)
-static char bmBuff[BMFIFOLEN];
-static char *bmRpos, *bmWpos;
-
-#define WMARK_RESTART (BMFIFOLEN-20000)
-#define WMARK_PLUG (BMFIFOLEN-17300)
-#define WMARK_UNPLUG (1024)
-static int plugged=0;
+void sleepmode();
 
 #define TCPSTATE_CLOSED 0
 #define TCPSTATE_HEADER 1
 #define TCPSTATE_DATA 2
-static char tcpConnState;
-
-void sleepmode();
-
-static int ICACHE_FLASH_ATTR fifoLen() {
-	int l=bmWpos-bmRpos;
-	if (l<0) l+=BMFIFOLEN;
-	return l;
-}
+int tcpConnState;
 
 
-static void ICACHE_FLASH_ATTR tstTimerCb(void *arg) {
-	int x;
-	//Lookup table. In binary: index abcd -> data 0a0b0c0d
-	char cmdSet[]={
-			0,1,4,1+4,
-			16,1+16,4+16,1+4+16,
-			64,1+64,4+64,1+4+64,
-			16+64,1+16+64,4+16+64,1+4+16+64
-		};
-	if (einkState==INK_STARTUP) {
-		einkPat=0;
-		ioEinkEna(1);
-		os_timer_arm(&tstTimer, 100, 0);
-		einkState=INK_VSTART;
-		REG_SET_BIT(0x3ff00014, BIT(0));
-		os_update_cpu_frequency(160);
-	} else if (einkState==INK_PAUSED) {
-		if (fifoLen()>(WMARK_RESTART) || !tcpConnState) {
-			//Wake up e-ink display!
-			ioEinkEna(1);
-			os_timer_arm(&tstTimer, 100, 0);
-			REG_SET_BIT(0x3ff00014, BIT(0));
-			os_update_cpu_frequency(160);
-			einkState=INK_RESUME;
-		} else {
-			//Keep sleeping
-			os_timer_arm(&tstTimer, 100, 0);
-		}
-	} else if (einkState==INK_RESUME) {
-		//Eink has just been powered on to resume writing. Move back to current line.
-		ioEinkVscanStart();
-		if (einkYpos!=0) {
-			ioEinkWrite(0);
-			ioEinkClk(800/4);
-			ioEinkVscanWrite(15);
-			//The code above seems to write _2_ lines, that's why we start x at 2. Strange.
-			for (x=2; x<einkYpos; x++) {
-				ioEinkHscanStart();
-				ioEinkHscanStop();
-				ioEinkVscanSkip();
-			}
-			//derp
-			ioEinkWrite(0);
-			ioEinkClk(800/4);
-		}
-		einkState=INK_HSEND;
-		os_timer_arm(&tstTimer, 10, 0);
-	} else if (einkState==INK_VSTART) {
-		ioEinkVscanStart();
-		einkYpos=0;
-		einkState=INK_HSEND;
-		os_timer_arm(&tstTimer, 20, 0);
-	} else if (einkState==INK_HSEND) {
-		if (einkPat<4) {
-			os_timer_arm(&tstTimer, 0, 0);
-			ioEinkHscanStart();
-	
-			if (einkPat==0 || einkPat==1) {
-				ioEinkWrite(0x55);
-				ioEinkClk(800/4);
-			}
-			if (einkPat==2 || einkPat==3) {
-				ioEinkWrite(0xaa);
-				ioEinkClk(800/4);
-			}
-			ioEinkHscanStop();
-			ioEinkVscanWrite(15);
-			einkYpos++;
-			if (einkYpos==600) {
-				einkState=INK_VSTOP;
-			}
-		} else {
-			//Calculate length of data in fifo
-			if (plugged && fifoLen()<WMARK_UNPLUG) {
-				espconn_recv_unhold(httpclientGetConn());
-				plugged=0;
-			}
-			if (fifoLen()<(800/4) && tcpConnState) {
-				//Fifo ran dry. Kill eink power and sleep to wait for more data.
-				ioEinkWrite(0xaa);
-				ioEinkClk(800/4);
-//				ioEinkVscanStop();
-				ioEinkEna(0);
-				REG_CLR_BIT(0x3ff00014, BIT(0));
-				os_update_cpu_frequency(80);
-				einkState=INK_PAUSED;
-				os_timer_arm(&tstTimer, 20, 0);
-			} else {
-				//We can draw stuf. Reschedule ASAP please.
-				os_timer_arm(&tstTimer, 0, 0);
-				ioEinkHscanStart();
+//This is used to make sure we use the espconn_recv_[un]hold calls only
+//once. The stack trips up when called multiple times.
+char tcpPlugged=0;
 
-				for (x=0; x<800; x+=8) {
-					ioEinkWrite(cmdSet[(*bmRpos)>>4]);
-					ioEinkWrite(cmdSet[(*bmRpos++)&0xf]);
-					if (bmRpos>&bmBuff[BMFIFOLEN-1]) bmRpos=bmBuff;
-				}
-				ioEinkHscanStop();
-				ioEinkVscanWrite(115);
-				einkYpos++;
-				if (einkYpos==600) {
-					einkState=INK_VSTOP;
-				}
-			}
-		}
+struct __attribute__ ((__packed__)) EinkHeader {
+	uint8_t ver;			//Header version. Only v1 is supported atm.
+	uint16_t sleeptime;		//sleep time, in seconds
+	uint8_t bmtype;			//bitmap type. Only 0 (1bpp, full refresh) is supported for now. Ignored.
+} einkHeader;
+int einkHeaderPos;
+char einkHeaderIsValid;
 
-	} else if (einkState==INK_VSTOP) {
-		//Skip any remaining lines
-		ioEinkVscanStop();
-		if (einkPat==4) {
-			einkState=INK_STARTUP;
-			os_printf("Done displaying image. Sleeping.\n");
-			ioEinkEna(0);
-			sleepmode();
-		} else {
-			einkPat++;
-			einkState=INK_VSTART;
-			os_timer_arm(&tstTimer, 10, 0);
-		}
-	}
-}
-
-
-
-void cb(char* data, int len) {
-	int x;
-//	os_printf("Data: %d bytes\n", len);
-	if (len==0) {
-		tcpConnState=TCPSTATE_CLOSED;
-	}
-	for (x=0; x<len; x++) {
-		if (tcpConnState==TCPSTATE_HEADER) {
-			if (data[x]==0) tcpConnState=TCPSTATE_DATA;
-		} else if (tcpConnState==TCPSTATE_DATA) {
-			*bmWpos++=data[x];
-			if (bmWpos>&bmBuff[BMFIFOLEN-1]) {
-//				os_printf("fifo: w wraparound\n");
-				bmWpos=bmBuff;
-			}
-			if (bmWpos==bmRpos) {
-				os_printf("fifo: OVERFLOW!\n");
-			}
-			if (!plugged && fifoLen()>WMARK_PLUG) {
-				espconn_recv_hold(httpclientGetConn());
-				plugged=1;
-			}
-		}
-	}
-}
-
-
+//Watchdog timer thing. Shuts down the device when everything takes
+//too long, eg due to network outages.
 static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	os_printf("Wdt. This takes too long. Go to sleep.\n");
 	ioEinkEna(0);
 	sleepmode();
 }
 
-static struct station_config stconf;
 
-static void ICACHE_FLASH_ATTR klontTimerCb(void *arg) {
-	os_printf("klonttimer\n");
-	if (wifi_get_opmode()!=1) {
-		wifi_set_opmode(1);
-		system_restart();
+//Called when the http client receives something
+void httpclientCb(char* data, int len) {
+	int x;
+	int bufLeft=65535;
+	if (data==NULL) {
+		//We're done here.
+		os_printf("Http conn closed.\n");
+		tcpConnState=TCPSTATE_CLOSED;
+		einkDataEnd();
+		return;
 	}
-	os_strncpy((char*)stconf.ssid, "Sprite", 32);
-	os_strncpy((char*)stconf.password, "", 64);
-	wifi_station_set_config(&stconf);
-	wifi_station_connect();
+	for (x=0; x<len; x++) {
+		if (tcpConnState==TCPSTATE_HEADER) {
+			((char*)&einkHeader)[einkHeaderPos++]=data[x];
+			if (einkHeaderPos>=sizeof(einkHeader)) {
+				if (einkHeader.ver==1) {
+					einkHeaderIsValid=1;
+				} else {
+					os_printf("Don't understand header ver %d.\n", einkHeader.ver);
+				}
+				tcpConnState=TCPSTATE_DATA;
+			}
+		} else if (tcpConnState==TCPSTATE_DATA) {
+			bufLeft=einkPushPixels(data[x]);
+		}
+	}
+	if (bufLeft<(1450*5) && !tcpPlugged) {
+		espconn_recv_hold(httpclientGetConn());
+		tcpPlugged=1;
+	}
+}
+
+void tcpEinkNeedData() {
+	if (tcpPlugged) {
+		espconn_recv_unhold(httpclientGetConn());
+		tcpPlugged=0;
+	}
+}
+
+EspFsFile *einkFile;
+
+void fileEinkNeedData() {
+	char data[128];
+	int x, l;
+	l=espFsRead(einkFile, data, sizeof(data));
+	for (x=0; x<l; x++) {
+		einkPushPixels(data[x]);
+	}
+	if (l<sizeof(data)) einkDataEnd();
+}
+
+void fileEinkDoneCb() {
+	espFsClose(einkFile);
 }
 
 void sleepmode() {
 #ifdef FIRST
 	ioEinkEna(1);
 #else
-//	wifi_set_sleep_type(MODEM_SLEEP_T);
-	system_deep_sleep(60*1000*1000);
+	if (einkHeaderIsValid) {
+		//Sleep the amount of time indicated.
+		system_deep_sleep(einkHeader.sleeptime*1000*1000);
+	} else {
+		//Default to 60sec sleep
+		system_deep_sleep(60*1000*1000);
+	}
 #endif
 }
 
+void einkDoneCb() {
+	sleepmode();
+}
 
+HttpdBuiltInUrl builtInUrls[]={
+	{"/", cgiRedirect, "/wifi.tpl"},
+	{"/wifiscan.cgi", cgiWiFiScan, NULL},
+	{"/wifi.tpl", cgiEspFsTemplate, tplWlan},
+	{"/connect.cgi", cgiWiFiConnect, NULL},
+	{"*", cgiEspFsHook, NULL}, //Catch-all cgi function for the filesystem
+	{NULL, NULL, NULL}
+};
 
+#define RTC_MAGIC 0xCAFED00D
 
 void user_init(void)
 {
-//	system_timer_reinit();
+	int rtcmagic;
+
 	stdoutInit();
 	ioInit();
+	configLoad();
 
-#ifdef FIRST
-	//Temp store for new ap info.
-	static struct station_config stconf;
-	os_strncpy((char*)stconf.ssid, "Sprite", 32);
-	os_strncpy((char*)stconf.password, "", 64);
-	wifi_station_disconnect();
-	wifi_station_set_config(&stconf);
-	wifi_station_connect();
-	wifi_set_opmode(1);
-#endif
+	system_rtc_mem_read(128, &rtcmagic, 4);
+	if (rtcmagic!=RTC_MAGIC) {
+		//Make sure we're in STA+AP mode
+		if (wifi_get_opmode()!=3) {
+			wifi_set_opmode(3);
+			system_restart();
+			return;
+		}
+		//For the next time: start in normal mode
+		rtcmagic=RTC_MAGIC;
+		system_rtc_mem_write(128, &rtcmagic, 4);
+		//Magic word has fallen out of the RTC. Probably means the battery has been changed or
+		//taken out. Go into reconfig mode.
 
-	bmRpos=bmBuff;
-	bmWpos=bmBuff;
+		einkFile=espFsOpen("apconnect.bm");
+		einkDisplay(2048, fileEinkNeedData, fileEinkDoneCb);
+
+		httpdInit(builtInUrls, 80);
+
+		os_timer_disarm(&wdtTimer);
+		os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);
+		os_timer_arm(&wdtTimer, 120000, 0); //shut down after 120 seconds
+		return;
+	}
+	
+	if (wifi_get_opmode()!=1) {
+		wifi_set_opmode(1);
+		system_restart();
+		return;
+	}
+
+	os_printf("Datasource %s\n", myConfig.url);
 	tcpConnState=TCPSTATE_HEADER;
-	httpclientFetch("meuk.spritesserver.nl", "/espbm.php", 1024, cb);
-
-	os_timer_disarm(&tstTimer);
-	os_timer_setfn(&tstTimer, tstTimerCb, NULL);
-	os_timer_arm(&tstTimer, 1000, 0);
-
-	os_timer_disarm(&klontTimer);
-	os_timer_setfn(&klontTimer, klontTimerCb, NULL);
-//	os_timer_arm(&klontTimer, 2000, 1);
+	einkHeaderPos=0;
+	einkHeaderIsValid=0;
+	httpclientFetch(myConfig.url, httpclientCb);
+	einkDisplay(24*1024, tcpEinkNeedData, einkDoneCb);
 
 	os_timer_disarm(&wdtTimer);
 	os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);

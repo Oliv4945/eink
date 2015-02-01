@@ -36,6 +36,7 @@ TARGET		= einkdisp
 MODULES		= driver user
 EXTRA_INCDIR	= include \
 		. \
+		lib/heatshrink/ \
 		$(SDK_EXTRA_INCLUDES)
 
 # libraries used in this project, mainly provided by the SDK
@@ -155,5 +156,16 @@ clean:
 	$(Q) rm -f $(FW_FILE_1)
 	$(Q) rm -f $(FW_FILE_2)
 	$(Q) rm -rf $(FW_BASE)
+
+
+webpages.espfs: html/ mkespfsimage/mkespfsimage
+	cd html; find | ../mkespfsimage/mkespfsimage > ../webpages.espfs; cd ..
+
+mkespfsimage/mkespfsimage: mkespfsimage/
+	make -C mkespfsimage
+
+htmlflash: webpages.espfs
+	if [ $$(stat -c '%s' webpages.espfs) -gt $$(( 0x2E000 )) ]; then echo "webpages.espfs too big!"; false; fi
+	$(ESPTOOL) -cp $(ESPPORT) -cb $(ESPBAUD) -ca 0x12000 -cf webpages.espfs -v
 
 $(foreach bdir,$(BUILD_DIR),$(eval $(call compile-objects,$(bdir))))
