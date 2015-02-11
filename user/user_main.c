@@ -17,6 +17,7 @@
 
 void user_init(void);
 static ETSTimer wdtTimer;
+static ETSTimer batMeasTimer;
 void sleepmode();
 
 #define TCPSTATE_CLOSED 0
@@ -24,6 +25,7 @@ void sleepmode();
 #define TCPSTATE_DATA 2
 int tcpConnState;
 
+int batteryMeasMv=-1;
 
 //This is used to make sure we use the espconn_recv_[un]hold calls only
 //once. The stack trips up when called multiple times.
@@ -43,6 +45,19 @@ static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	os_printf("Wdt. This takes too long. Go to sleep.\n");
 	ioEinkEna(0);
 	sleepmode();
+}
+
+static void ICACHE_FLASH_ATTR batMeasTimerCb(void *arg) {
+	//Battery voltage is divided by an 4.7K/1K resistor divider.
+	//ADC: 1024 = 1V
+	batteryMeasMv=(system_adc_read()*9765*5.7)/10000;
+}
+
+void httpclientHdrCb(char* data) {
+	unsigned char mac[6];
+	wifi_get_macaddr(STATION_IF, mac);
+	os_sprintf(data, "x-battery-mv: %d\r\nx-mac: %02x:%02x:%02x:%02x:%02x:%02x\r\n",
+		batteryMeasMv, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 
@@ -173,8 +188,12 @@ void user_init(void)
 	tcpConnState=TCPSTATE_HEADER;
 	einkHeaderPos=0;
 	einkHeaderIsValid=0;
-	httpclientFetch(myConfig.url, httpclientCb);
+	httpclientFetch(myConfig.url, httpclientCb, httpclientHdrCb);
 	einkDisplay(24*1024, tcpEinkNeedData, einkDoneCb);
+
+	os_timer_disarm(&batMeasTimer);
+	os_timer_setfn(&batMeasTimer, batMeasTimerCb, NULL);
+	os_timer_arm(&batMeasTimer, 500, 0); //measure battery when eink is on
 
 	os_timer_disarm(&wdtTimer);
 	os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);

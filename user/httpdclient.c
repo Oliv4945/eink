@@ -17,6 +17,7 @@ static int outpos;
 static char host[128];
 static int port;
 static char path[512];
+void (*getHdrCb)(char *buff);
 void (*callback)(char *data, int len);
 
 static struct espconn conn;
@@ -94,10 +95,12 @@ static void ICACHE_FLASH_ATTR ircRecvCb(void *arg, char *data, unsigned short le
 
 static void ICACHE_FLASH_ATTR httpclientConnectedCb(void *arg) {
 	struct espconn *conn=(struct espconn *)arg;
-	char buff[1024];
+	char buff[2048];
 	espconn_regist_recvcb(conn, ircRecvCb);
 	os_printf("Connected.\n");
-	os_sprintf(buff, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
+	os_sprintf(buff, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n", path, host);
+	if (getHdrCb!=NULL) getHdrCb(buff+strlen(buff));
+	strcat(buff, "\r\n");
 	os_printf("httpclient: %s", buff);
 	espconn_sent(conn, (unsigned char *)buff, os_strlen(buff));
 	state=STATE_HDR;
@@ -144,9 +147,10 @@ struct espconn ICACHE_FLASH_ATTR *httpclientGetConn() {
 }
 
 
-void ICACHE_FLASH_ATTR httpclientFetch(char *url, void (*cb)(char*, int)) {
+void ICACHE_FLASH_ATTR httpclientFetch(char *url, void (*cb)(char*, int), void(*hcb)(char*)) {
 	static ip_addr_t ip;
 	parseIntoFields(url);
 	callback=cb;
+	getHdrCb=hcb;
 	espconn_gethostbyname(&conn, host, &ip, httpServerFoundCb);
 }
