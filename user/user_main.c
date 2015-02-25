@@ -124,6 +124,7 @@ HttpdBuiltInUrl builtInUrls[]={
 	{"/wifiscan.cgi", cgiWiFiScan, NULL},
 	{"/wifi.tpl", cgiEspFsTemplate, tplWlan},
 	{"/connect.cgi", cgiWiFiConnect, NULL},
+	{"/diag.cgi", cgiDiag, NULL},
 	{"*", cgiEspFsHook, NULL}, //Catch-all cgi function for the filesystem
 	{NULL, NULL, NULL}
 };

@@ -226,3 +226,13 @@ void ICACHE_FLASH_ATTR tplWlan(HttpdConnData *connData, char *token, void **arg)
 }
 
 
+
+int ICACHE_FLASH_ATTR cgiDiag(HttpdConnData *connData) {
+	if (connData->conn==NULL) {
+		//Connection aborted. Clean up.
+		return HTTPD_CGI_DONE;
+	}
+	ioEinkEna(1);
+	httpdSend(connData, "Eink voltages enabled.", -1);
+	return HTTPD_CGI_DONE;
+}
