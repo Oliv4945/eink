@@ -80,8 +80,10 @@ static void ICACHE_FLASH_ATTR einkTimerCb(void *arg) {
 			//The code above seems to write _2_ lines, that's why we start x at 2. Strange.
 			for (x=2; x<einkYpos; x++) {
 				ioEinkHscanStart();
+				ioEinkWrite(0xff);
+				ioEinkClk(800/4);
 				ioEinkHscanStop();
-				ioEinkVscanSkip();
+				ioEinkVscanWrite(0);
 			}
 			//derp
 			ioEinkWrite(0);
