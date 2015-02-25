@@ -18,6 +18,11 @@
 void user_init(void);
 static ETSTimer wdtTimer;
 void sleepmode();
+int batteryMeasMv=-1;
+
+
+#define BAT_LOW_LVL_MV 3100
+
 
 #define TCPSTATE_CLOSED 0
 #define TCPSTATE_HEADER 1
@@ -45,6 +50,13 @@ static void ICACHE_FLASH_ATTR wdtTimerCb(void *arg) {
 	sleepmode();
 }
 
+
+void httpclientHdrCb(char* data) {
+	unsigned char mac[6];
+	wifi_get_macaddr(STATION_IF, mac);
+	os_sprintf(data, "x-battery-mv: %d\r\nx-mac: %02x:%02x:%02x:%02x:%02x:%02x\r\n",
+		batteryMeasMv, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 //Called when the http client receives something
 void httpclientCb(char* data, int len) {
@@ -102,9 +114,16 @@ void fileEinkDoneCb() {
 }
 
 void sleepmode() {
-#ifdef FIRST
-	ioEinkEna(1);
-#else
+	if (batteryMeasMv<BAT_LOW_LVL_MV) {
+		//make sure next start is without wifi powering up. 
+		system_deep_sleep_set_option(4);
+		//Sleep 10 mins
+		system_deep_sleep(600*1000*1000);
+		return;
+	} else {
+		//Normal start.
+		system_deep_sleep_set_option(1);
+	}
 	if (einkHeaderIsValid) {
 		//Sleep the amount of time indicated.
 		system_deep_sleep(einkHeader.sleeptime*1000*1000);
@@ -112,7 +131,6 @@ void sleepmode() {
 		//Default to 60sec sleep
 		system_deep_sleep(60*1000*1000);
 	}
-#endif
 }
 
 void einkDoneCb() {
@@ -134,12 +152,14 @@ HttpdBuiltInUrl builtInUrls[]={
 void user_init(void)
 {
 	int rtcmagic;
+	int batEmptyShown;
 
 	stdoutInit();
 	ioInit();
 	configLoad();
 
 	system_rtc_mem_read(128, &rtcmagic, 4);
+	system_rtc_mem_read(128+4, &batEmptyShown, 4);
 	if (rtcmagic!=RTC_MAGIC) {
 		//Make sure we're in STA+AP mode
 		if (wifi_get_opmode()!=3) {
@@ -170,14 +190,39 @@ void user_init(void)
 		return;
 	}
 
+	ioEinkEna(1);
+	os_delay_us(2000);
+	//Battery voltage is divided by an 4.7K/1K resistor divider.
+	//ADC: 1024 = 1V
+	batteryMeasMv=(system_adc_read()*9765*5.7)/10000;
+	if (batteryMeasMv<BAT_LOW_LVL_MV) {
+		//Crap, battery is dying.
+		if (batEmptyShown!=1) {
+			os_printf("Battery empty! Showing bat empty icon...\n");
+			batEmptyShown=1;
+			system_rtc_mem_write(128+4, &batEmptyShown, 4);
+			einkFile=espFsOpen("batempty.bm");
+			einkDisplay(2048, fileEinkNeedData, fileEinkDoneCb);
+			return;
+		} else {
+			os_printf("Battery empty! Sleeping...\n");
+			sleepmode();
+		}
+	} else {
+		batEmptyShown=0;
+		system_rtc_mem_write(128+4, &batEmptyShown, 4);
+	}
+
 	os_printf("Datasource %s\n", myConfig.url);
 	tcpConnState=TCPSTATE_HEADER;
 	einkHeaderPos=0;
 	einkHeaderIsValid=0;
-	httpclientFetch(myConfig.url, httpclientCb);
+	httpclientFetch(myConfig.url, httpclientCb, httpclientHdrCb);
 	einkDisplay(24*1024, tcpEinkNeedData, einkDoneCb);
 
 	os_timer_disarm(&wdtTimer);
 	os_timer_setfn(&wdtTimer, wdtTimerCb, NULL);
 	os_timer_arm(&wdtTimer, 20000, 0); //shut down after 15 seconds
 }
+
+
