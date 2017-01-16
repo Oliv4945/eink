@@ -157,9 +157,11 @@ clean:
 	$(Q) rm -f $(FW_FILE_2)
 	$(Q) rm -rf $(FW_BASE)
 
+	$(Q) make -C mkespfsimage clean
+
 
 webpages.espfs: html/ mkespfsimage/mkespfsimage
-	cd html; find | ../mkespfsimage/mkespfsimage > ../webpages.espfs; cd ..
+	cd html; find . | ../mkespfsimage/mkespfsimage > ../webpages.espfs; cd ..
 
 mkespfsimage/mkespfsimage: mkespfsimage/
 	make -C mkespfsimage
