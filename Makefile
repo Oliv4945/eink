@@ -27,6 +27,8 @@ ESPPORT		?= /dev/ttyUSB0
 #ESPDELAY indicates seconds to wait between flashing the two binary images
 ESPDELAY	?= 3
 ESPBAUD		?= 115200
+# Select board in order to issue proper reset. 'none', 'ck', 'wifio', 'nodemcu'
+ESPBOARD	?= nodemcu
 
 # name for the target project
 TARGET		= einkdisp
@@ -142,10 +144,10 @@ firmware:
 	$(Q) mkdir -p $@
 
 flash: $(FW_FILE_1) $(FW_FILE_2)
-	$(Q) $(ESPTOOL) -cp $(ESPPORT) -cb $(ESPBAUD) -ca 0x00000 -cf firmware/0x00000.bin -v
+	$(Q) $(ESPTOOL) -cp $(ESPPORT) -cd $(ESPBOARD) -cb $(ESPBAUD) -ca 0x00000 -cf firmware/0x00000.bin -v
 	$(Q) [ $(ESPDELAY) -ne 0 ] && echo "Please put the ESP in bootloader mode..." || true
 	$(Q) sleep $(ESPDELAY) || true
-	$(Q) $(ESPTOOL) -cp $(ESPPORT) -cb $(ESPBAUD) -ca 0x40000 -cf firmware/0x40000.bin -v
+	$(Q) $(ESPTOOL) -cp $(ESPPORT) -cd $(ESPBOARD) -cb $(ESPBAUD) -ca 0x40000 -cf firmware/0x40000.bin -v
 
 clean:
 	$(Q) rm -f $(APP_AR)
@@ -168,6 +170,6 @@ mkespfsimage/mkespfsimage: mkespfsimage/
 
 htmlflash: webpages.espfs
 	if [ $$(stat -c '%s' webpages.espfs) -gt $$(( 0x2E000 )) ]; then echo "webpages.espfs too big!"; false; fi
-	$(ESPTOOL) -cp $(ESPPORT) -cb $(ESPBAUD) -ca 0x12000 -cf webpages.espfs -v
+	$(ESPTOOL) -cp $(ESPPORT) -cd $(ESPBOARD) -cb $(ESPBAUD) -ca 0x12000 -cf webpages.espfs -v
 
 $(foreach bdir,$(BUILD_DIR),$(eval $(call compile-objects,$(bdir))))
